@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Volt-like utility layer */
+@layer base {
+  html, body, #app { height: 100%; }
+}
+
+@layer components {
+  .card { @apply bg-card rounded-xl shadow-soft border border-border; }
+  .btn { @apply inline-flex items-center gap-2 rounded-lg px-3 py-2 font-medium transition; }
+  .btn-primary { @apply btn bg-primary-600 text-white hover:bg-primary-700; }
+  .btn-outline { @apply btn border border-border bg-white hover:bg-muted; }
+  .toolbar { @apply sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-border; }
+}
+
