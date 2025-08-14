@@ -83,15 +83,17 @@
               <!-- Anaqueles -->
               <template v-for="rack in racks" :key="rack.id">
                 <v-group :config="{ x: rack.x, y: rack.y, draggable: true }"
-                         @dragend="e => onDragEnd(rack.id, e.target.x(), e.target.y())"
+                         @dragstart="e => onRackDragStart(rack, e)"
+                         @dragmove="e => onRackDragMove(rack, e)"
+                         @dragend="e => onRackDragEnd(rack, e)"
                          @dblclick="goDetail(rack.id)"
                          @click="select(rack.id)">
                   <template v-if="rack.type==='barrel'">
-                    <v-circle :config="{ x: (rack.width/2), y: (rack.width/2), radius: rack.width/2, stroke:'#0ea5e9', fill: materialColor(rack.material) }" />
+                    <v-circle :config="{ x: (rack.width/2), y: (rack.width/2), radius: rack.width/2, stroke: invalidMap[rack.id] ? '#ef4444' : '#0ea5e9', fill: materialColor(rack.material) }" />
                     <v-text :config="{ x:8, y: rack.width + 4, text:rack.name, fontSize:14, fill:'#0f172a' }" />
                   </template>
                   <template v-else>
-                    <v-rect :config="{ x:0, y:0, width:rack.width, height:rack.height, stroke:'#0ea5e9', cornerRadius:8, fill: materialColor(rack.material) }" />
+                    <v-rect :config="{ x:0, y:0, width:rack.width, height:rack.height, stroke: invalidMap[rack.id] ? '#ef4444' : '#0ea5e9', cornerRadius:8, fill: materialColor(rack.material) }" />
                     <v-line :config="{ points:[0,0, rack.width,0], stroke:'#e2e8f0', strokeWidth:1 }" />
                     <v-text :config="{ x:8, y:8, text:rack.name, fontSize:14, fill:'#0f172a' }" />
                   </template>
@@ -367,9 +369,17 @@ function onDrop(e){
   const rect = container.getBoundingClientRect()
   const clientX = e.clientX
   const clientY = e.clientY
-  const x = (clientX - rect.left + container.scrollLeft) / scale.value
-  const y = (clientY - rect.top + container.scrollTop) / scale.value
-  store.addRackFromTemplate(key, { x: Math.round(x), y: Math.round(y) })
+  const x = Math.round((clientX - rect.left + container.scrollLeft) / scale.value)
+  const y = Math.round((clientY - rect.top + container.scrollTop) / scale.value)
+
+  const tpl = findTemplateByKey(key)
+  if (!tpl) return
+  const geom = getGeomForTemplate(tpl, x, y)
+  if (willCollideWithGeom(geom)) {
+    // bloquear colocación
+    return
+  }
+  store.addRackFromTemplate(key, { x, y })
 }
 function onDragEnd(id, x, y){
   store.updateRackPosition(id, Math.round(x), Math.round(y))
@@ -442,6 +452,106 @@ function doDeleteRack(){
   if (confirmRackDel.id) store.removeRack(confirmRackDel.id)
   confirmRackDel.open = false
   confirmRackDel.id = null
+}
+
+// Estado para validación de colisiones durante drag
+const invalidMap = reactive({})
+const prevPos = reactive({})
+
+function getRackGeom(r, x, y){
+  if ((r.type || 'rectangle') === 'barrel') {
+    const d = Number(r.width)
+    return { kind: 'circle', cx: x + d/2, cy: y + d/2, r: d/2 }
+  }
+  return { kind: 'rect', x, y, w: Number(r.width), h: Number(r.height) }
+}
+function rectsOverlapStrict(a,b){
+  return (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y)
+}
+function circlesOverlapStrict(a,b){
+  const dx = a.cx - b.cx
+  const dy = a.cy - b.cy
+  const dist2 = dx*dx + dy*dy
+  const rsum = a.r + b.r
+  return dist2 < rsum*rsum
+}
+function circleRectOverlapStrict(c, r){
+  const nx = Math.max(r.x, Math.min(c.cx, r.x + r.w))
+  const ny = Math.max(r.y, Math.min(c.cy, r.y + r.h))
+  const dx = c.cx - nx
+  const dy = c.cy - ny
+  return (dx*dx + dy*dy) < (c.r * c.r)
+}
+function geomsOverlapStrict(g1, g2){
+  if (g1.kind === 'rect' && g2.kind === 'rect') return rectsOverlapStrict(g1,g2)
+  if (g1.kind === 'circle' && g2.kind === 'circle') return circlesOverlapStrict(g1,g2)
+  if (g1.kind === 'circle' && g2.kind === 'rect') return circleRectOverlapStrict(g1,g2)
+  if (g1.kind === 'rect' && g2.kind === 'circle') return circleRectOverlapStrict(g2,g1)
+  return false
+}
+function willCollideAt(id, x, y){
+  const me = racks.value.find(r => r.id === id)
+  if (!me) return false
+  const g1 = getRackGeom(me, x, y)
+  for (const r of racks.value) {
+    if (r.id === id) continue
+    const g2 = getRackGeom(r, r.x, r.y)
+    if (geomsOverlapStrict(g1, g2)) return true
+  }
+  return false
+}
+
+function onRackDragStart(rack, e){
+  prevPos[rack.id] = { x: rack.x, y: rack.y }
+  invalidMap[rack.id] = false
+}
+function onRackDragMove(rack, e){
+  const x = Math.round(e.target.x())
+  const y = Math.round(e.target.y())
+  invalidMap[rack.id] = willCollideAt(rack.id, x, y)
+}
+function onRackDragEnd(rack, e){
+  const x = Math.round(e.target.x())
+  const y = Math.round(e.target.y())
+  const bad = willCollideAt(rack.id, x, y)
+  if (bad) {
+    const prev = prevPos[rack.id]
+    if (prev) {
+      // revertir posición visual y no guardar
+      e.target.position({ x: prev.x, y: prev.y })
+      e.target.getLayer()?.batchDraw?.()
+    }
+  } else {
+    store.updateRackPosition(rack.id, x, y)
+  }
+  invalidMap[rack.id] = false
+}
+
+// Validación de colisión al soltar desde la lista
+function findTemplateByKey(key){
+  const [source, id] = (key || '').split(':')
+  return templates.value.find(t => `${t.__source || 'builtin'}:${t.id}` === `${source}:${id}`)
+}
+function getGeomForTemplate(tpl, x, y){
+  const type = tpl.type || 'rectangle'
+  if (type === 'barrel'){
+    const d = Number(tpl.diameter || tpl.width || 80)
+    return { kind: 'circle', cx: x + d/2, cy: y + d/2, r: d/2 }
+  }
+  if (type === 'square'){
+    const side = Number(tpl.side || tpl.width || tpl.height || 100)
+    return { kind: 'rect', x, y, w: side, h: side }
+  }
+  const w = Number(tpl.width || 120)
+  const h = Number(tpl.height || 80)
+  return { kind: 'rect', x, y, w, h }
+}
+function willCollideWithGeom(geom){
+  for (const r of racks.value) {
+    const g2 = getRackGeom(r, r.x, r.y)
+    if (geomsOverlapStrict(geom, g2)) return true
+  }
+  return false
 }
 </script>
 
