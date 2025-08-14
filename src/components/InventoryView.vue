@@ -12,6 +12,7 @@
             <option v-for="w in workspaces" :key="w.id" :value="w.id">{{ w.name }}</option>
           </select>
           <button class="btn btn-primary" @click="openNewWsModal">+ Nueva Área de Trabajo</button>
+          <button class="btn btn-outline" @click="openEditWsModal">Editar Área</button>
         </div>
       </div>
     </div>
@@ -78,7 +79,9 @@
           <v-stage ref="stageRef" :config="{ width: workspace.width, height: workspace.height, draggable: false, scale: {x: scale, y: scale} }">
             <v-layer>
               <!-- Fondo -->
-              <v-rect :config="{ x:0, y:0, width: workspace.width, height: workspace.height, fill:'#f8fafc' }" />
+          <v-rect :config="{ x:0, y:0, width: workspace.width, height: workspace.height, fill:'#f8fafc' }" />
+              <!-- Límite del área -->
+              <v-line :config="{ points: workspaceFlatPoints, closed:true, stroke:'#22c55e', strokeWidth:3, lineJoin:'round', fill:'rgba(34,197,94,0.06)' }" />
 
               <!-- Anaqueles -->
               <template v-for="rack in racks" :key="rack.id">
@@ -91,6 +94,7 @@
                   <template v-if="rack.type==='barrel'">
                     <v-circle :config="{ x: (rack.width/2), y: (rack.width/2), radius: rack.width/2, stroke: invalidMap[rack.id] ? '#ef4444' : '#0ea5e9', fill: materialColor(rack.material) }" />
                     <v-text :config="{ x:8, y: rack.width + 4, text:rack.name, fontSize:14, fill:'#0f172a' }" />
+                    <v-text :config="{ x:8, y: rack.width + 22, text: capacityExceeded ? 'Capacidad excedida' : '', fontSize:12, fill:'#ef4444' }" />
                   </template>
                   <template v-else>
                     <v-rect :config="{ x:0, y:0, width:rack.width, height:rack.height, stroke: invalidMap[rack.id] ? '#ef4444' : '#0ea5e9', cornerRadius:8, fill: materialColor(rack.material) }" />
@@ -103,7 +107,17 @@
           </v-stage>
         </div>
       </div>
-    </section>
+</section>
+
+    <!-- Editor de área: crear/editar -->
+    <WorkspaceEditor
+      :open="wsEditor.open"
+      :value="wsEditor.value"
+      :canvasW="workspace.width"
+      :canvasH="workspace.height"
+      @save="saveWorkspace"
+      @cancel="closeWsEditor"
+    />
 
     <!-- Modal nueva área de trabajo -->
     <div v-if="newWsOpen" class="fixed inset-0 z-50 flex items-center justify-center">
@@ -210,6 +224,8 @@ import { computed, ref, onMounted, reactive } from 'vue'
 import { useInventoryStore } from '../stores/inventory'
 import Toolbar from './Toolbar.vue'
 import MaterialSelector from './MaterialSelector.vue'
+import WorkspaceEditor from './WorkspaceEditor.vue'
+import { isRectInsidePolygon as geomIsRectInside, isCircleInsidePolygon as geomIsCircleInside, polygonArea, metersSquaredFromPxSquared } from '../utils/geom'
 
 const store = useInventoryStore()
 
@@ -226,9 +242,26 @@ function onWorkspaceChange(id) {
 }
 
 // Racks del área actual
-const racks = computed(() => store.racks)
-const workspace = computed(() => store.workspace)
-const scale = ref(1)
+  const racks = computed(() => store.racks)
+  const workspace = computed(() => store.workspace)
+  const scale = ref(1)
+
+  // Polígono del área actual
+  const wsPolygon = computed(() => store.workspacePolygon)
+  const workspaceFlatPoints = computed(() => wsPolygon.value.flatMap(p => [p.x, p.y]))
+
+  // Capacidad de superficie
+  const workspaceAreaPx2 = computed(() => polygonArea(wsPolygon.value || []))
+  function rackAreaPx2(r){
+    if ((r.type || 'rectangle') === 'barrel'){
+      const d = Number(r.width)
+      const radsq = (d/2) * (d/2)
+      return Math.PI * radsq
+    }
+    return Number(r.width) * Number(r.height)
+  }
+  const totalOccupiedPx2 = computed(() => racks.value.reduce((acc, r) => acc + rackAreaPx2(r), 0))
+  const capacityExceeded = computed(() => totalOccupiedPx2.value > workspaceAreaPx2.value)
 
 const canvasContainer = ref(null)
 const stageRef = ref(null)
@@ -375,8 +408,13 @@ function onDrop(e){
   const tpl = findTemplateByKey(key)
   if (!tpl) return
   const geom = getGeomForTemplate(tpl, x, y)
-  if (willCollideWithGeom(geom)) {
+  if (willCollideWithGeom(geom) || !geomInsideWorkspace(geom)) {
     // bloquear colocación
+    return
+  }
+  // Verificar capacidad de superficie
+  const addArea = geom.kind === 'circle' ? Math.PI * geom.r * geom.r : geom.w * geom.h
+  if ((totalOccupiedPx2.value + addArea) > workspaceAreaPx2.value) {
     return
   }
   store.addRackFromTemplate(key, { x, y })
@@ -399,13 +437,43 @@ onMounted(()=>{
   // Los datos iniciales ahora se cargan por área desde el store.
 })
 
+// Editor de área
+const wsEditor = reactive({ open: false, value: null })
+function openEditWsModal(){
+  const ws = store.currentWorkspace
+  if (!ws) return
+  wsEditor.open = true
+  wsEditor.value = { id: ws.id, name: ws.name, shape: ws.shape || 'custom', polygon: ws.polygon || [], metersPerPixel: ws.metersPerPixel || 0.01 }
+}
+function closeWsEditor(){ wsEditor.open = false; wsEditor.value = null }
+function saveWorkspace(payload){
+  if (payload.id){
+    // Editar existente: validar racks dentro
+    const outIds = []
+    for (const r of racks.value){
+      const inside = isInsideWorkspace(r, r.x, r.y)
+      if (!inside) outIds.push(r.id)
+    }
+    // Por ahora: eliminar los fuera. En mejoras, preguntar mover/eliminar.
+    if (outIds.length){
+      store.currentWorkspace.racks = store.currentWorkspace.racks.filter(r => !outIds.includes(r.id))
+    }
+    store.updateWorkspace(payload.id, { name: payload.name, polygon: payload.polygon, shape: payload.shape, metersPerPixel: payload.metersPerPixel })
+  } else {
+    store.addWorkspace(payload.name, { polygon: payload.polygon, shape: payload.shape, metersPerPixel: payload.metersPerPixel })
+  }
+  closeWsEditor()
+}
+
 // Modal nueva área
 const newWsOpen = ref(false)
 const newWsName = ref('')
 function openNewWsModal(){ newWsOpen.value = true }
 function closeNewWsModal(){ newWsOpen.value = false; newWsName.value = '' }
 function createWorkspace(){
-  store.addWorkspace(newWsName.value)
+  // Abrir editor con rect por defecto y nombre
+  wsEditor.open = true
+  wsEditor.value = { id: null, name: newWsName.value || '', shape: 'rectangle', metersPerPixel: 0.01, polygon: [ { x:10, y:10 }, { x: workspace.value.width-10, y:10 }, { x: workspace.value.width-10, y: workspace.value.height-10 }, { x:10, y: workspace.value.height-10 } ] }
   closeNewWsModal()
 }
 
@@ -508,12 +576,17 @@ function onRackDragStart(rack, e){
 function onRackDragMove(rack, e){
   const x = Math.round(e.target.x())
   const y = Math.round(e.target.y())
-  invalidMap[rack.id] = willCollideAt(rack.id, x, y)
+  let bad = willCollideAt(rack.id, x, y)
+  // Validar límites del área
+  bad = bad || !isInsideWorkspace(rack, x, y)
+  invalidMap[rack.id] = bad
 }
 function onRackDragEnd(rack, e){
   const x = Math.round(e.target.x())
   const y = Math.round(e.target.y())
-  const bad = willCollideAt(rack.id, x, y)
+  const coll = willCollideAt(rack.id, x, y)
+  const out = !isInsideWorkspace(rack, x, y)
+  const bad = coll || out
   if (bad) {
     const prev = prevPos[rack.id]
     if (prev) {
@@ -552,6 +625,27 @@ function willCollideWithGeom(geom){
     if (geomsOverlapStrict(geom, g2)) return true
   }
   return false
+}
+
+// Validar límites contra polígono del workspace
+function isInsideWorkspace(rack, x, y){
+  const poly = wsPolygon.value
+  if (!poly?.length) return true
+  if ((rack.type || 'rectangle') === 'barrel'){
+    const d = Number(rack.width)
+    const cx = x + d/2
+    const cy = y + d/2
+    const r = d/2
+    return geomIsCircleInside(cx, cy, r, poly)
+  }
+  return geomIsRectInside(x, y, Number(rack.width), Number(rack.height), poly)
+}
+function geomInsideWorkspace(geom){
+  const poly = wsPolygon.value
+  if (!poly?.length) return true
+  if (geom.kind === 'circle') return geomIsCircleInside(geom.cx, geom.cy, geom.r, poly)
+  if (geom.kind === 'rect') return geomIsRectInside(geom.x, geom.y, geom.w, geom.h, poly)
+  return true
 }
 </script>
 

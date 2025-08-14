@@ -70,7 +70,15 @@ export const useInventoryStore = defineStore('inventory', {
         const rack = buildRackFromTemplate(t, { x: 60 + i * 200, y: 80 + idx * 40 })
         if (rack) racks.push(rack)
       })
-      return { id, name: w.name, racks, localTemplates: [] }
+      // Workspace geometry: por defecto, rectángulo del tamaño del lienzo base
+      const polygon = w.polygon || [
+        { x: 10, y: 10 },
+        { x: (baseWorkspace.width - 10), y: 10 },
+        { x: (baseWorkspace.width - 10), y: (baseWorkspace.height - 10) },
+        { x: 10, y: (baseWorkspace.height - 10) },
+      ]
+      const shape = w.shape || 'custom' // 'rectangle' | 'l' | 'custom'
+      return { id, name: w.name, racks, localTemplates: [], polygon, shape, metersPerPixel: w.metersPerPixel || 0.01 }
     })
     const currentWorkspaceId = workspaces[0]?.id || null
 
@@ -101,13 +109,25 @@ export const useInventoryStore = defineStore('inventory', {
       const builtins = builtinTemplates.map(t => ({ ...t, __source: 'builtin' }))
       const locals = (this.customTemplates || []).map(t => ({ ...t, __source: 'custom' }))
       return [...builtins, ...locals]
+    },
+    workspacePolygon() {
+      return this.currentWorkspace?.polygon || []
+    },
+    workspaceMetersPerPixel() {
+      return this.currentWorkspace?.metersPerPixel || 0.01
     }
   },
   actions: {
     // Gestión de áreas
-    addWorkspace(name) {
+    addWorkspace(name, opts = {}) {
       const id = uid()
-      const ws = { id, name: name?.trim() || `Área ${id.slice(-3)}`, racks: [], localTemplates: [] }
+      const polygon = opts.polygon || [
+        { x: 10, y: 10 },
+        { x: (this.workspace.width - 10), y: 10 },
+        { x: (this.workspace.width - 10), y: (this.workspace.height - 10) },
+        { x: 10, y: (this.workspace.height - 10) },
+      ]
+      const ws = { id, name: name?.trim() || `Área ${id.slice(-3)}`, racks: [], localTemplates: [], polygon, shape: opts.shape || 'custom', metersPerPixel: opts.metersPerPixel || 0.01 }
       this.workspaces.push(ws)
       this.currentWorkspaceId = id
       this.currentRackId = null
@@ -117,6 +137,11 @@ export const useInventoryStore = defineStore('inventory', {
         this.currentWorkspaceId = id
         this.currentRackId = null
       }
+    },
+    updateWorkspace(id, payload) {
+      const idx = this.workspaces.findIndex(w => w.id === id)
+      if (idx === -1) return
+      this.workspaces[idx] = { ...this.workspaces[idx], ...payload }
     },
 
     clearRacks() {
