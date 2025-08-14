@@ -1,28 +1,60 @@
 import { defineStore } from 'pinia'
-import { materials as baseMaterials, shelfTemplates, workspace as baseWorkspace, initialWorkspaces } from '../data/mock'
+import { materials as baseMaterials, shelfTemplates as builtinTemplates, workspace as baseWorkspace, initialWorkspaces } from '../data/mock'
 
 function uid() {
   return Math.random().toString(36).slice(2, 9)
 }
 
-function createRackFromTemplate(tplId, position) {
-  const tpl = shelfTemplates.find(t => t.id === tplId)
+function buildRackFromTemplate(tpl, position) {
   if (!tpl) return null
   const id = uid()
-  const shelves = Array.from({ length: tpl.shelves }).map((_, i) => ({
-    id: uid(),
-    y: ((i + 1) * (tpl.height / (tpl.shelves + 1))),
-    height: 8,
-  }))
-  return {
+  const type = tpl.type || 'rectangle'
+  const common = {
     id,
+    type,
     name: tpl.name,
     x: position?.x ?? 100,
     y: position?.y ?? 100,
-    width: tpl.width,
-    height: tpl.height,
-    depth: tpl.depth,
-    material: tpl.material,
+    material: tpl.material || 'wood',
+  }
+  if (type === 'barrel') {
+    const diameter = tpl.diameter || tpl.width || 80
+    const height = tpl.height || tpl.barrelHeight || 100
+    return {
+      ...common,
+      width: diameter, // usado para escala 2D top-view
+      height: diameter,
+      depth: tpl.depth ?? 0,
+      barrelHeight: height, // altura real del barril
+      shelves: [],
+    }
+  }
+  if (type === 'square') {
+    const side = tpl.side || tpl.width || tpl.height || 100
+    const shelves = Array.from({ length: tpl.shelves || 0 }).map((_, i) => ({
+      id: uid(),
+      y: ((i + 1) * (side / ((tpl.shelves || 0) + 1))),
+      height: 8,
+    }))
+    return {
+      ...common,
+      width: side,
+      height: side,
+      depth: tpl.depth ?? 40,
+      shelves,
+    }
+  }
+  // rectangle por defecto
+  const shelves = Array.from({ length: tpl.shelves || 0 }).map((_, i) => ({
+    id: uid(),
+    y: ((i + 1) * ((tpl.height || 120) / ((tpl.shelves || 0) + 1))),
+    height: 8,
+  }))
+  return {
+    ...common,
+    width: tpl.width || 120,
+    height: tpl.height || 80,
+    depth: tpl.depth ?? 40,
     shelves,
   }
 }
@@ -33,12 +65,12 @@ export const useInventoryStore = defineStore('inventory', {
     const workspaces = initialWorkspaces.map((w, idx) => {
       const id = uid()
       const racks = []
-      const tpls = [shelfTemplates[0], shelfTemplates[1]].filter(Boolean)
+      const tpls = [builtinTemplates[0], builtinTemplates[1]].filter(Boolean)
       tpls.forEach((t, i) => {
-        const rack = createRackFromTemplate(t.id, { x: 60 + i * 200, y: 80 + idx * 40 })
+        const rack = buildRackFromTemplate(t, { x: 60 + i * 200, y: 80 + idx * 40 })
         if (rack) racks.push(rack)
       })
-      return { id, name: w.name, racks }
+      return { id, name: w.name, racks, localTemplates: [] }
     })
     const currentWorkspaceId = workspaces[0]?.id || null
 
@@ -59,14 +91,23 @@ export const useInventoryStore = defineStore('inventory', {
       return (this.currentWorkspace?.racks) || []
     },
     currentRack(state) {
-      return this.racks.find(r => r.id === state.currentRackId) || null
+      return this.racks.find(r => r.id === this.currentRackId) || null
     },
+    customTemplates() {
+      return this.currentWorkspace?.localTemplates || []
+    },
+    templates() {
+      // Combinar built-in y locales. Marcamos la fuente para DnD
+      const builtins = builtinTemplates.map(t => ({ ...t, __source: 'builtin' }))
+      const locals = (this.customTemplates || []).map(t => ({ ...t, __source: 'custom' }))
+      return [...builtins, ...locals]
+    }
   },
   actions: {
     // Gestión de áreas
     addWorkspace(name) {
       const id = uid()
-      const ws = { id, name: name?.trim() || `Área ${id.slice(-3)}`, racks: [] }
+      const ws = { id, name: name?.trim() || `Área ${id.slice(-3)}`, racks: [], localTemplates: [] }
       this.workspaces.push(ws)
       this.currentWorkspaceId = id
       this.currentRackId = null
@@ -84,11 +125,47 @@ export const useInventoryStore = defineStore('inventory', {
       this.currentRackId = null
     },
 
-    // Crear un anaquel basado en una plantilla en el área actual
-    addRackFromTemplate(templateId, position = { x: 100, y: 100 }) {
+    // Plantillas personalizadas por área
+    addCustomTemplate(payload) {
+      const ws = this.currentWorkspace
+      if (!ws) return null
+      const id = `tpl-${uid()}`
+      const type = payload.type || 'rectangle'
+      const base = { id, name: payload.name?.trim() || `Anaquel ${id.slice(-3)}`, type, material: payload.material || 'wood' }
+      let tpl
+      if (type === 'barrel') {
+        tpl = { ...base, diameter: Number(payload.diameter) || 80, height: Number(payload.height) || 100, depth: 0 }
+      } else if (type === 'square') {
+        tpl = { ...base, side: Number(payload.side) || 100, depth: Number(payload.depth) || 40, shelves: Number(payload.shelves) || 0 }
+      } else {
+        tpl = { ...base, width: Number(payload.width) || 120, height: Number(payload.height) || 80, depth: Number(payload.depth) || 40, shelves: Number(payload.shelves) || 0 }
+      }
+      ws.localTemplates.push(tpl)
+      return tpl
+    },
+    removeCustomTemplate(tplId) {
       const ws = this.currentWorkspace
       if (!ws) return
-      const rack = createRackFromTemplate(templateId, position)
+      ws.localTemplates = ws.localTemplates.filter(t => t.id !== tplId)
+    },
+
+    // Crear un anaquel basado en una plantilla (global o local) en el área actual
+    addRackFromTemplate(templateKeyOrId, position = { x: 100, y: 100 }) {
+      const ws = this.currentWorkspace
+      if (!ws) return
+      let source = 'auto'
+      let id = templateKeyOrId
+      if (typeof templateKeyOrId === 'string' && templateKeyOrId.includes(':')) {
+        const [s, rest] = templateKeyOrId.split(':')
+        source = s
+        id = rest
+      }
+      let tpl = null
+      if (source === 'builtin') tpl = builtinTemplates.find(t => t.id === id)
+      else if (source === 'custom') tpl = ws.localTemplates.find(t => t.id === id)
+      else tpl = builtinTemplates.find(t => t.id === id) || ws.localTemplates.find(t => t.id === id)
+
+      const rack = buildRackFromTemplate(tpl, position)
       if (rack) ws.racks.push(rack)
     },
     setCurrentRack(id) {
@@ -110,22 +187,24 @@ export const useInventoryStore = defineStore('inventory', {
       ws.racks = ws.racks.filter(r => r.id !== id)
       if (this.currentRackId === id) this.currentRackId = null
     },
-    // Estantes internos
+    // Estantes internos (solo para rect/square)
     addShelf(rackId, y) {
       const r = this.racks.find(r => r.id === rackId)
-      if (!r) return
+      if (!r || r.type === 'barrel') return
+      if (!Array.isArray(r.shelves)) r.shelves = []
       r.shelves.push({ id: uid(), y: y ?? r.height / 2, height: 8 })
     },
     removeShelf(rackId, shelfId) {
       const r = this.racks.find(r => r.id === rackId)
-      if (!r) return
-      r.shelves = r.shelves.filter(s => s.id !== shelfId)
+      if (!r || r.type === 'barrel') return
+      r.shelves = (r.shelves || []).filter(s => s.id !== shelfId)
     },
     moveShelf(rackId, shelfId, newY) {
       const r = this.racks.find(r => r.id === rackId)
-      if (!r) return
-      const s = r.shelves.find(s => s.id === shelfId)
+      if (!r || r.type === 'barrel') return
+      const s = (r.shelves || []).find(s => s.id === shelfId)
       if (s) s.y = Math.max(4, Math.min(newY, r.height - 4))
     },
   }
 })
+
