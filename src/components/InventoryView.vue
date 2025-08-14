@@ -23,11 +23,17 @@
         <button class="btn btn-outline text-sm" @click="openNewRackTplModal">+ Agregar Anaquel</button>
       </div>
       <div class="space-y-2">
-        <div v-for="tpl in templates" :key="(tpl.__source || 'builtin') + ':' + tpl.id" class="flex items-center justify-between p-3 border rounded-lg"
+        <div v-for="tpl in templates" :key="getTplKey(tpl)" class="flex items-center justify-between p-3 border rounded-lg cursor-grab"
+             :class="{ 'opacity-0': dragKey === getTplKey(tpl) }"
              draggable="true"
-             @dragstart="e => onDragStart(e, tpl)">
+             @dragstart="e => onDragStart(e, tpl)"
+             @dragend="onCardDragEnd">
           <div>
-            <p class="font-medium">{{ tpl.name }}</p>
+            <p class="font-medium flex items-center gap-2">
+              {{ tpl.name }}
+              <span class="inline-block w-3 h-3 rounded-full border border-slate-300" :style="{ backgroundColor: materialColor(tpl.material) }"></span>
+              <span class="text-xs text-slate-500">{{ getMaterialName(tpl.material) }}</span>
+            </p>
             <p class="text-xs text-slate-500 capitalize">Tipo: {{ toHumanType(tpl.type) }}</p>
             <p class="text-sm text-slate-500" v-if="tpl.type==='rectangle'">{{ tpl.width }}x{{ tpl.height }} cm</p>
             <p class="text-sm text-slate-500" v-else-if="tpl.type==='square'">Lado: {{ tpl.side || tpl.width }} cm</p>
@@ -81,11 +87,11 @@
                          @dblclick="goDetail(rack.id)"
                          @click="select(rack.id)">
                   <template v-if="rack.type==='barrel'">
-                    <v-circle :config="{ x: (rack.width/2), y: (rack.width/2), radius: rack.width/2, stroke:'#0ea5e9', fill:'#ffffff' }" />
+                    <v-circle :config="{ x: (rack.width/2), y: (rack.width/2), radius: rack.width/2, stroke:'#0ea5e9', fill: materialColor(rack.material) }" />
                     <v-text :config="{ x:8, y: rack.width + 4, text:rack.name, fontSize:14, fill:'#0f172a' }" />
                   </template>
                   <template v-else>
-                    <v-rect :config="{ x:0, y:0, width:rack.width, height:rack.height, stroke:'#0ea5e9', cornerRadius:8, fill:'#ffffff' }" />
+                    <v-rect :config="{ x:0, y:0, width:rack.width, height:rack.height, stroke:'#0ea5e9', cornerRadius:8, fill: materialColor(rack.material) }" />
                     <v-line :config="{ points:[0,0, rack.width,0], stroke:'#e2e8f0', strokeWidth:1 }" />
                     <v-text :config="{ x:8, y:8, text:rack.name, fontSize:14, fill:'#0f172a' }" />
                   </template>
@@ -231,13 +237,126 @@ function toHumanType(t){
   return 'Rectángulo'
 }
 
+// Quitar mapeo hardcodeado y usar datos de materiales
+const materials = computed(() => store.materials)
+function materialColor(id){
+  const m = materials.value.find(x => x.id === id)
+  return m?.color || '#ffffff'
+}
+
+function drawRoundedRect(ctx, x, y, w, h, r){
+  const rr = Math.min(r, w/2, h/2)
+  ctx.beginPath()
+  ctx.moveTo(x+rr, y)
+  ctx.lineTo(x+w-rr, y)
+  ctx.quadraticCurveTo(x+w, y, x+w, y+rr)
+  ctx.lineTo(x+w, y+h-rr)
+  ctx.quadraticCurveTo(x+w, y+h, x+w-rr, y+h)
+  ctx.lineTo(x+rr, y+h)
+  ctx.quadraticCurveTo(x, y+h, x, y+h-rr)
+  ctx.lineTo(x, y+rr)
+  ctx.quadraticCurveTo(x, y, x+rr, y)
+  ctx.closePath()
+}
+
+function createDragPreviewCanvas(tpl){
+  // Obtener dimensiones según tipo
+  let w=120, h=80
+  const type = tpl.type || 'rectangle'
+  if (type === 'square') {
+    const side = Number(tpl.side || tpl.width || tpl.height || 100)
+    w = side; h = side
+  } else if (type === 'barrel') {
+    const d = Number(tpl.diameter || tpl.width || 80)
+    w = d; h = d
+  } else {
+    w = Number(tpl.width || 120)
+    h = Number(tpl.height || 80)
+  }
+
+  // Escalar a previsualización (máx 160px mayor dimensión)
+  const maxDim = 160
+  const scale = Math.min(1, maxDim / Math.max(w, h))
+  const pad = 12
+  const dpr = window.devicePixelRatio || 1
+  const cw = Math.ceil((w*scale + pad*2) * dpr)
+  const ch = Math.ceil((h*scale + pad*2) * dpr)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = cw
+  canvas.height = ch
+  canvas.style.width = `${cw/dpr}px`
+  canvas.style.height = `${ch/dpr}px`
+  const ctx = canvas.getContext('2d')
+  ctx.scale(dpr, dpr)
+
+  // Fondo transparente con sombra suave
+  ctx.clearRect(0,0, cw, ch)
+  ctx.save()
+  ctx.translate(pad, pad)
+
+  const fill = materialColor(tpl.material)
+  const stroke = '#0ea5e9'
+  ctx.fillStyle = fill
+  ctx.strokeStyle = stroke
+  ctx.lineWidth = 2
+  ctx.shadowColor = 'rgba(0,0,0,0.15)'
+  ctx.shadowBlur = 6
+  ctx.shadowOffsetY = 2
+
+  if (tpl.type === 'barrel') {
+    const r = (w*scale)/2
+    ctx.beginPath()
+    ctx.arc(r, r, r, 0, Math.PI*2)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+  } else {
+    const rw = w*scale
+    const rh = h*scale
+    drawRoundedRect(ctx, 0, 0, rw, rh, 8)
+    ctx.fill()
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  return { canvas, offsetX: (w*scale)/2 + pad, offsetY: (h*scale)/2 + pad }
+}
+
 function addFromTpl(tpl){
   store.addRackFromTemplate(`${tpl.__source || 'builtin'}:${tpl.id}`, { x: 50 + Math.random()*100, y: 50 + Math.random()*100 })
 }
+const dragKey = ref(null)
+const previewElRef = ref(null)
+function getTplKey(tpl){ return `${tpl.__source || 'builtin'}:${tpl.id}` }
+
+function onCardDragEnd(){
+  dragKey.value = null
+  if (previewElRef.value) {
+    try { previewElRef.value.remove() } catch {}
+    previewElRef.value = null
+  }
+}
+
 function onDragStart(e, tpl){
   try {
-    e.dataTransfer.setData('text/plain', `${tpl.__source || 'builtin'}:${tpl.id}`)
+    const key = getTplKey(tpl)
+    dragKey.value = key
+    e.dataTransfer.setData('text/plain', key)
     e.dataTransfer.effectAllowed = 'copy'
+
+    // Vista previa real con canvas temporal durante todo el drag
+    const preview = createDragPreviewCanvas(tpl)
+    if (preview?.canvas) {
+      const el = preview.canvas
+      el.style.position = 'fixed'
+      el.style.top = '-1000px'
+      el.style.left = '0'
+      el.style.pointerEvents = 'none'
+      document.body.appendChild(el)
+      previewElRef.value = el
+      e.dataTransfer.setDragImage(el, preview.offsetX, preview.offsetY)
+    }
   } catch {}
 }
 function onDrop(e){
@@ -288,7 +407,10 @@ function closeNewRackTplModal(){
   newRackTplOpen.value = false
   Object.assign(newTpl, { name: '', type: 'rectangle', width: 120, height: 80, side: 100, diameter: 80, material: 'wood' })
 }
-const materials = computed(() => store.materials)
+function getMaterialName(id){
+  const m = materials.value.find(x => x.id === id)
+  return m?.name || '-'
+}
 function saveNewRackTpl(){
   const payload = { name: newTpl.name, type: newTpl.type, material: newTpl.material }
   if (newTpl.type === 'barrel') Object.assign(payload, { diameter: newTpl.diameter, height: newTpl.height })

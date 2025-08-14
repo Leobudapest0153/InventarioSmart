@@ -1,8 +1,8 @@
 // Datos mock iniciales de materiales y anaqueles
 export const materials = [
-  { id: 'wood', name: 'Madera', maxWeight: 100 },
-  { id: 'metal', name: 'Metal', maxWeight: 200 },
-  { id: 'plastic', name: 'Plástico', maxWeight: 50 },
+  { id: 'wood', name: 'Madera', maxWeight: 100, color: '#deb887' },
+  { id: 'metal', name: 'Metal', maxWeight: 200, color: '#c0c0c0' },
+  { id: 'plastic', name: 'Plástico', maxWeight: 50, color: '#93c5fd' },
 ]
 
 export const shelfTemplates = [
