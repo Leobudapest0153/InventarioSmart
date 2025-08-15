@@ -77,10 +77,23 @@
              @dragover.prevent
              @drop="onDrop">
           <v-stage ref="stageRef" :config="{ width: workspace.width, height: workspace.height, draggable: true, scale: {x: scale, y: scale} }"
-                   @wheel="onWheel">
+                   @wheel="onWheel"
+                   @dragmove="onStageDragMove"
+                   @dragend="onStageDragMove">
             <v-layer>
               <!-- Fondo -->
-          <v-rect :config="{ x:0, y:0, width: workspace.width, height: workspace.height, fill:'#f8fafc' }" />
+              <v-rect :config="{ x:0, y:0, width: workspace.width, height: workspace.height, fill:'#f8fafc' }" />
+
+              <!-- Grid -->
+              <GridLayer :width="workspace.width"
+                         :height="workspace.height"
+                         :scale="scale"
+                         :stageX="stagePosition.x"
+                         :stageY="stagePosition.y"
+                         :pixelsPerUnit="store.workspacePixelsPerUnit"
+                         :unit="store.workspaceUnit"
+                         :polygon="wsPolygon"/>
+
               <!-- Límite del área -->
               <v-line :config="{ points: workspaceFlatPoints, closed:true, stroke:'#22c55e', strokeWidth:3, lineJoin:'round', fill:'rgba(34,197,94,0.06)' }" />
 
@@ -105,10 +118,18 @@
                 </v-group>
               </template>
             </v-layer>
-          </v-stage>
+        </v-stage>
+          <!-- Rulers overlay -->
+          <RulersOverlay :width="workspace.width"
+                         :height="workspace.height"
+                         :scale="scale"
+                         :stageX="stagePosition.x"
+                         :stageY="stagePosition.y"
+                         :pixelsPerUnit="store.workspacePixelsPerUnit"
+                         :unit="store.workspaceUnit"/>
         </div>
       </div>
-</section>
+    </section>
 
     <!-- Editor de área: crear/editar -->
     <WorkspaceEditor
@@ -226,6 +247,8 @@ import { useInventoryStore } from '../stores/inventory'
 import Toolbar from './Toolbar.vue'
 import MaterialSelector from './MaterialSelector.vue'
 import WorkspaceEditor from './WorkspaceEditor.vue'
+import GridLayer from './GridLayer.vue'
+import RulersOverlay from './RulersOverlay.vue'
 import { isRectInsidePolygon as geomIsRectInside, isCircleInsidePolygon as geomIsCircleInside, polygonArea, metersSquaredFromPxSquared } from '../utils/geom'
 
 const store = useInventoryStore()
@@ -268,6 +291,7 @@ function onWorkspaceChange(id) {
 
 const canvasContainer = ref(null)
 const stageRef = ref(null)
+const stagePosition = ref({ x: 0, y: 0 })
 
 // Zoom con rueda del ratón en el área actual
 function onWheel(e){
@@ -295,6 +319,14 @@ function onWheel(e){
   }
   stage.position(newPos)
   stage.batchDraw()
+  // Actualizar posición para grid/rulers
+  stagePosition.value = { x: stage.x(), y: stage.y() }
+}
+
+function onStageDragMove(){
+  const stage = stageRef.value?.getNode?.()
+  if (!stage) return
+  stagePosition.value = { x: stage.x(), y: stage.y() }
 }
 
 function toHumanType(t){
