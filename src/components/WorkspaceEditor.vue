@@ -12,7 +12,7 @@
                         @dragmove="onStageDragMove"
                         @dragend="onStageDragMove">
               <!-- Capa recortada: fondo + grilla -->
-              <v-layer :config="{ clip: { x: 0, y: 0, width: canvasW, height: canvasH } }">
+              <v-layer :config="{ clip: { x: 0, y: 0, width: canvasW, height: canvasH }, listening: false }">
                 <v-rect :config="{ x:0, y:0, width: canvasW, height: canvasH, fill:'#f8fafc' }" />
                 <!-- Grid -->
                 <GridLayer :width="canvasW"

@@ -1,7 +1,7 @@
 <template>
   <div class="rulers" :style="{ width: width + 'px', height: height + 'px' }">
-    <canvas ref="hCanvas" class="ruler ruler-h" :width="width" :height="rulerSize"/>
-    <canvas ref="vCanvas" class="ruler ruler-v" :width="rulerSize" :height="height"/>
+    <canvas ref="hCanvas" class="ruler ruler-h" :width="width - rulerSize" :height="rulerSize"/>
+    <canvas ref="vCanvas" class="ruler ruler-v" :width="rulerSize" :height="height - rulerSize"/>
   </div>
 </template>
 
@@ -41,7 +41,9 @@ function drawRulers() {
   const stageY = Number(props.stageY) || 0
   const unit = props.unit === 'cm' ? 'cm' : 'm'
 
-  const pxPerUnitOnScreen = ppu * s
+  const innerW = Math.max(0, props.width - rulerSize)
+  const innerH = Math.max(0, props.height - rulerSize)
+
   const targetMinor = 50
   // paso menor en px de pantalla, convertido a mundo (px mundo)
   const minorStepPxScreen = niceStepPx(targetMinor)
@@ -62,7 +64,7 @@ function drawRulers() {
     hctx.lineWidth = 1
 
     const worldX0 = -stageX / s
-    const worldX1 = worldX0 + (props.width / s)
+    const worldX1 = worldX0 + (innerW / s)
 
     const startX = Math.floor(worldX0 / minorStepPxWorld) * minorStepPxWorld
     for (let xw = startX; xw <= worldX1; xw += minorStepPxWorld) {
@@ -96,7 +98,7 @@ function drawRulers() {
     vctx.lineWidth = 1
 
     const worldY0 = -stageY / s
-    const worldY1 = worldY0 + (props.height / s)
+    const worldY1 = worldY0 + (innerH / s)
 
     const startY = Math.floor(worldY0 / minorStepPxWorld) * minorStepPxWorld
     for (let yw = startY; yw <= worldY1; yw += minorStepPxWorld) {
