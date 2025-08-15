@@ -12,7 +12,7 @@
                         @dragmove="onStageDragMove"
                         @dragend="onStageDragMove">
               <!-- Capa recortada: fondo + grilla -->
-              <v-layer :config="{ clip: { x: 0, y: 0, width: canvasW, height: canvasH }, listening: false }">
+              <v-layer :config="{ listening: false }">
                 <v-rect :config="{ x:0, y:0, width: canvasW, height: canvasH, fill:'#f8fafc' }" />
                 <!-- Grid -->
                 <GridLayer :width="canvasW"
@@ -21,7 +21,8 @@
                            :stageX="stagePosition.x"
                            :stageY="stagePosition.y"
                            :pixelsPerUnit="local.pixelsPerUnit"
-                           :unit="local.unit"/>
+                           :unit="local.unit"
+                           :bbox="gridBBox"/>
               </v-layer>
 
               <!-- Capa de elementos editables (sin clipping) -->
@@ -190,6 +191,23 @@ watch(() => props.value, (v) => {
 
 const canvasW = computed(() => props.canvasW)
 const canvasH = computed(() => props.canvasH)
+
+// Bounding box del polígono para la grilla
+const gridBBox = computed(() => {
+  const pts = local.polygon
+  if (!pts || pts.length === 0) return { minX: 0, minY: 0, maxX: canvasW.value, maxY: canvasH.value }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.x > maxX) maxX = p.x
+    if (p.y > maxY) maxY = p.y
+  }
+  // En caso de que todos los puntos coincidan, asegurar un bbox mínimo
+  if (minX === maxX) maxX = minX + 1
+  if (minY === maxY) maxY = minY + 1
+  return { minX, minY, maxX, maxY }
+})
 
 // Zoom / Pan
 const stageRef = ref(null)

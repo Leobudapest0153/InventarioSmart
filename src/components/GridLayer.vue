@@ -1,8 +1,10 @@
 <template>
-  <v-shape :config="{ listening: false }" :sceneFunc="draw"></v-shape>
+  <v-shape :config="{ listening: false, versionKey }" :sceneFunc="draw"></v-shape>
 </template>
 
 <script setup>
+import { computed } from 'vue'
+
 const props = defineProps({
   // Tamaño del lienzo/stage en px (pantalla)
   width: { type: Number, required: true },
@@ -15,7 +17,14 @@ const props = defineProps({
   // Unidades y escala
   pixelsPerUnit: { type: Number, required: true }, // px por unidad (m o cm)
   unit: { type: String, default: 'm' }, // 'm' | 'cm'
+  // Bounding box del polígono: { minX, minY, maxX, maxY }
+  bbox: { type: Object, default: () => ({ minX: 0, minY: 0, maxX: 0, maxY: 0 }) },
 })
+
+const versionKey = computed(() => [
+  props.bbox?.minX, props.bbox?.minY, props.bbox?.maxX, props.bbox?.maxY,
+  props.scale, props.stageX, props.stageY, props.pixelsPerUnit, props.unit
+].join('|'))
 
 function niceStep(targetPx, pxPerUnit) {
   if (!pxPerUnit || pxPerUnit <= 0) return 1
@@ -32,57 +41,58 @@ function niceStep(targetPx, pxPerUnit) {
   return best
 }
 
-const draw = (ctx, shape) => {
+const draw = (ctx) => {
   const w = props.width
   const h = props.height
   const scale = props.scale || 1
   const stageX = props.stageX || 0
   const stageY = props.stageY || 0
   const ppu = Number(props.pixelsPerUnit) || 100
+  // Referencia a bbox para reactividad (no se usa directamente para limitar)
+  const bb = props.bbox || { minX: 0, minY: 0, maxX: 0, maxY: 0 }
 
-  // Convertir viewport visible en coords de mundo (px del mundo)
+  // Viewport visible (coords mundo)
   const viewW = w / scale
   const viewH = h / scale
   const worldX0 = -stageX / scale
   const worldY0 = -stageY / scale
+  const worldX1 = worldX0 + viewW
+  const worldY1 = worldY0 + viewH
 
-  // Densidad de grilla adaptativa
+  // Paso adaptativo menores y mayores (mayores cada 1 unidad)
   const pxPerUnitOnScreen = ppu * scale
-  const minorTargetPx = 35 // ~35px entre líneas menores
+  const minorTargetPx = 35
   let stepUnits = niceStep(minorTargetPx, pxPerUnitOnScreen)
   if (stepUnits <= 0) stepUnits = 1
   const stepPxWorld = stepUnits * ppu
-
-  // Líneas mayores en cada unidad completa
   const majorPxWorld = 1 * ppu
 
-  const endX = worldX0 + viewW
-  const endY = worldY0 + viewH
+  // Inicio alineado con paso menor
   const startX = Math.floor(worldX0 / stepPxWorld) * stepPxWorld
   const startY = Math.floor(worldY0 / stepPxWorld) * stepPxWorld
 
-  const minorColor = '#e5e7eb' // slate-200
-  const majorColor = '#cbd5e1' // slate-300
+  const minorColor = '#e5e7eb'
+  const majorColor = '#cbd5e1'
 
   // Verticales
   ctx.beginPath()
-  for (let xw = startX; xw <= endX; xw += stepPxWorld) {
+  for (let xw = startX; xw <= worldX1; xw += stepPxWorld) {
     const isMajor = (Math.round(xw / majorPxWorld) === xw / majorPxWorld)
     ctx.strokeStyle = isMajor ? majorColor : minorColor
     ctx.lineWidth = isMajor ? 1.2 : 0.6
     ctx.moveTo(xw, worldY0)
-    ctx.lineTo(xw, endY)
+    ctx.lineTo(xw, worldY1)
   }
   ctx.stroke()
 
   // Horizontales
   ctx.beginPath()
-  for (let yw = startY; yw <= endY; yw += stepPxWorld) {
+  for (let yw = startY; yw <= worldY1; yw += stepPxWorld) {
     const isMajor = (Math.round(yw / majorPxWorld) === yw / majorPxWorld)
     ctx.strokeStyle = isMajor ? majorColor : minorColor
     ctx.lineWidth = isMajor ? 1.2 : 0.6
     ctx.moveTo(worldX0, yw)
-    ctx.lineTo(endX, yw)
+    ctx.lineTo(worldX1, yw)
   }
   ctx.stroke()
 }
