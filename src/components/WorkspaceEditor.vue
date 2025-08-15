@@ -1,7 +1,7 @@
 <template>
   <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/40" @click="onCancel"></div>
-    <div class="relative bg-white rounded-lg shadow-xl w-full max-w-3xl p-4 mt-100">
+    <div class="relative bg-white rounded-lg shadow-xl w-full max-w-3xl p-4 mt-100 max-h-[90vh] overflow-y-auto">
       <h3 class="text-lg font-semibold mb-3">Área de Trabajo</h3>
 
       <div class="grid gap-4 md:grid-cols-5">
@@ -126,6 +126,10 @@
               </div>
               <button class="btn btn-outline col-span-2" @click="applyL">Aplicar</button>
             </div>
+            <div v-if="local.shape==='custom'" class="mt-2 space-y-2">
+              <p class="text-xs text-slate-600">Edita los vértices directamente en el lienzo. Cuando termines, aplica los cambios.</p>
+              <button class="btn btn-outline" @click="onSave">Aplicar</button>
+            </div>
           </div>
           <div class="card p-3">
             <h4 class="font-medium mb-2">Unidades y escala</h4>
@@ -149,7 +153,7 @@
 
       <div class="mt-4 flex justify-end gap-2">
         <button class="btn btn-outline" @click="onCancel">Cancelar</button>
-        <button class="btn btn-primary" @click="onSave">Guardar</button>
+        <button class="btn btn-primary" @click="onSave">{{ local.shape==='custom' ? 'Aplicar' : 'Guardar' }}</button>
       </div>
     </div>
   </div>
@@ -392,8 +396,26 @@ function deleteSelected(){
 }
 
 function onSave(){
-  // Validar que polígono tenga al menos 3 puntos
-  if (!local.polygon || local.polygon.length < 3) return
+  notice.value = ''
+  // Validar polígono
+  const pts = local.polygon || []
+  if (!Array.isArray(pts) || pts.length < 3){
+    notice.value = 'El polígono debe tener al menos 3 vértices.'
+    return
+  }
+  for (let i=0;i<pts.length;i++){
+    const p = pts[i]
+    const nx = Number(p.x), ny = Number(p.y)
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)){
+      notice.value = 'Coordenadas de vértices inválidas.'
+      return
+    }
+  }
+  // Área > 0
+  if ((areaPx2.value || 0) <= 0){
+    notice.value = 'El polígono debe tener área mayor a 0.'
+    return
+  }
   emit('save', { id: local.id, name: local.name.trim() || 'Área', shape: local.shape, polygon: local.polygon, unit: local.unit, pixelsPerUnit: Number(local.pixelsPerUnit) || 100 })
 }
 function onCancel(){ emit('cancel') }

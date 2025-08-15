@@ -48,8 +48,6 @@ const draw = (ctx) => {
   const stageX = props.stageX || 0
   const stageY = props.stageY || 0
   const ppu = Number(props.pixelsPerUnit) || 100
-  // Referencia a bbox para reactividad (no se usa directamente para limitar)
-  const bb = props.bbox || { minX: 0, minY: 0, maxX: 0, maxY: 0 }
 
   // Viewport visible (coords mundo)
   const viewW = w / scale

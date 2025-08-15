@@ -92,7 +92,7 @@
                          :stageY="stagePosition.y"
                          :pixelsPerUnit="store.workspacePixelsPerUnit"
                          :unit="store.workspaceUnit"
-                         :polygon="wsPolygon"/>
+                         :bbox="wsBBox"/>
 
               <!-- Límite del área -->
               <v-line :config="{ points: workspaceFlatPoints, closed:true, stroke:'#22c55e', strokeWidth:3, lineJoin:'round', fill:'rgba(34,197,94,0.06)' }" />
@@ -100,7 +100,7 @@
               <!-- Anaqueles -->
               <template v-for="rack in racks" :key="rack.id">
                 <v-group :config="{ x: rack.x, y: rack.y, draggable: true }"
-                         @dragstart="e => onRackDragStart(rack, e)"
+                         @dragstart="() => onRackDragStart(rack)"
                          @dragmove="e => onRackDragMove(rack, e)"
                          @dragend="e => onRackDragEnd(rack, e)"
                          @dblclick="goDetail(rack.id)"
@@ -242,14 +242,14 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, reactive } from 'vue'
+import { computed, ref, reactive } from 'vue'
 import { useInventoryStore } from '../stores/inventory'
 import Toolbar from './Toolbar.vue'
 import MaterialSelector from './MaterialSelector.vue'
 import WorkspaceEditor from './WorkspaceEditor.vue'
 import GridLayer from './GridLayer.vue'
 import RulersOverlay from './RulersOverlay.vue'
-import { isRectInsidePolygon as geomIsRectInside, isCircleInsidePolygon as geomIsCircleInside, polygonArea, metersSquaredFromPxSquared } from '../utils/geom'
+import { isRectInsidePolygon as geomIsRectInside, isCircleInsidePolygon as geomIsCircleInside, polygonArea } from '../utils/geom'
 
 const store = useInventoryStore()
 
@@ -273,7 +273,20 @@ function onWorkspaceChange(id) {
   // Polígono del área actual
   const wsPolygon = computed(() => store.workspacePolygon)
   const workspaceFlatPoints = computed(() => wsPolygon.value.flatMap(p => [p.x, p.y]))
-
+  const wsBBox = computed(() => {
+    const poly = wsPolygon.value || []
+    if (!poly.length) return { minX: 0, minY: 0, maxX: workspace.value.width, maxY: workspace.value.height }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const p of poly){
+      if (p.x < minX) minX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.x > maxX) maxX = p.x
+      if (p.y > maxY) maxY = p.y
+    }
+    if (minX === maxX) maxX = minX + 1
+    if (minY === maxY) maxY = minY + 1
+    return { minX, minY, maxX, maxY }
+  })
   // Capacidad de superficie
   const workspaceAreaPx2 = computed(() => polygonArea(wsPolygon.value || []))
   function rackAreaPx2(r){
@@ -286,8 +299,6 @@ function onWorkspaceChange(id) {
   }
   const totalOccupiedPx2 = computed(() => racks.value.reduce((acc, r) => acc + rackAreaPx2(r), 0))
   const capacityExceeded = computed(() => totalOccupiedPx2.value > workspaceAreaPx2.value)
-  const occupiedM2 = computed(() => metersSquaredFromPxSquared(totalOccupiedPx2.value, store.workspacePixelsPerUnit, store.workspaceUnit))
-  const capacityM2 = computed(() => metersSquaredFromPxSquared(workspaceAreaPx2.value, store.workspacePixelsPerUnit, store.workspaceUnit))
 
 const canvasContainer = ref(null)
 const stageRef = ref(null)
@@ -341,6 +352,10 @@ function materialColor(id){
   const m = materials.value.find(x => x.id === id)
   return m?.color || '#ffffff'
 }
+function getMaterialName(id){
+  const m = materials.value.find(x => x.id === id)
+  return m?.name || '-'
+}
 
 function drawRoundedRect(ctx, x, y, w, h, r){
   const rr = Math.min(r, w/2, h/2)
@@ -359,7 +374,7 @@ function drawRoundedRect(ctx, x, y, w, h, r){
 
 function createDragPreviewCanvas(tpl){
   // Obtener dimensiones según tipo
-  let w=120, h=80
+  let w, h
   const type = tpl.type || 'rectangle'
   if (type === 'square') {
     const side = Number(tpl.side || tpl.width || tpl.height || 100)
@@ -482,157 +497,7 @@ function onDrop(e){
   }
   store.addRackFromTemplate(key, { x, y })
 }
-function onDragEnd(id, x, y){
-  store.updateRackPosition(id, Math.round(x), Math.round(y))
-}
-function goDetail(id){
-  store.setCurrentRack(id)
-  window.location.hash = `#/shelf/${id}`
-}
-function select(id){
-  store.setCurrentRack(id)
-}
-function clearRacks(){
-  store.clearRacks()
-}
-
-onMounted(()=>{
-  // Los datos iniciales ahora se cargan por área desde el store.
-})
-
-// Editor de área
-const wsEditor = reactive({ open: false, value: null })
-function openEditWsModal(){
-  const ws = store.currentWorkspace
-  if (!ws) return
-  wsEditor.open = true
-  wsEditor.value = { id: ws.id, name: ws.name, shape: ws.shape || 'custom', polygon: ws.polygon || [], unit: store.workspaceUnit, pixelsPerUnit: store.workspacePixelsPerUnit }
-}
-function closeWsEditor(){ wsEditor.open = false; wsEditor.value = null }
-function saveWorkspace(payload){
-  if (payload.id){
-    // Editar existente: validar racks dentro
-    const outIds = []
-    for (const r of racks.value){
-      const inside = isInsideWorkspace(r, r.x, r.y)
-      if (!inside) outIds.push(r.id)
-    }
-    // Por ahora: eliminar los fuera. En mejoras, preguntar mover/eliminar.
-    if (outIds.length){
-      store.currentWorkspace.racks = store.currentWorkspace.racks.filter(r => !outIds.includes(r.id))
-    }
-    store.updateWorkspace(payload.id, { name: payload.name, polygon: payload.polygon, shape: payload.shape, unit: payload.unit, pixelsPerUnit: payload.pixelsPerUnit })
-  } else {
-    store.addWorkspace(payload.name, { polygon: payload.polygon, shape: payload.shape, unit: payload.unit, pixelsPerUnit: payload.pixelsPerUnit })
-  }
-  closeWsEditor()
-}
-
-// Modal nueva área
-const newWsOpen = ref(false)
-const newWsName = ref('')
-function openNewWsModal(){ newWsOpen.value = true }
-function closeNewWsModal(){ newWsOpen.value = false; newWsName.value = '' }
-function createWorkspace(){
-  // Abrir editor con rect por defecto y nombre
-  wsEditor.open = true
-  wsEditor.value = { id: null, name: newWsName.value || '', shape: 'rectangle', unit: 'm', pixelsPerUnit: 100, polygon: [ { x:10, y:10 }, { x: workspace.value.width-10, y:10 }, { x:workspace.value.width-10, y: workspace.value.height-10 }, { x:10, y: workspace.value.height-10 } ] }
-  closeNewWsModal()
-}
-
-// Modal nueva plantilla
-const newRackTplOpen = ref(false)
-const newTpl = reactive({ name: '', type: 'rectangle', width: 120, height: 80, side: 100, diameter: 80, material: 'wood' })
-function openNewRackTplModal(){ newRackTplOpen.value = true }
-function closeNewRackTplModal(){
-  newRackTplOpen.value = false
-  Object.assign(newTpl, { name: '', type: 'rectangle', width: 120, height: 80, side: 100, diameter: 80, material: 'wood' })
-}
-function getMaterialName(id){
-  const m = materials.value.find(x => x.id === id)
-  return m?.name || '-'
-}
-function saveNewRackTpl(){
-  const payload = { name: newTpl.name, type: newTpl.type, material: newTpl.material }
-  if (newTpl.type === 'barrel') Object.assign(payload, { diameter: newTpl.diameter, height: newTpl.height })
-  else if (newTpl.type === 'square') Object.assign(payload, { side: newTpl.side, depth: 40, shelves: 0 })
-  else Object.assign(payload, { width: newTpl.width, height: newTpl.height, depth: 40, shelves: 0 })
-  store.addCustomTemplate(payload)
-  closeNewRackTplModal()
-}
-
-// Confirmación eliminar plantilla
-const confirmDel = reactive({ open: false, id: null })
-function askDeleteTemplate(tpl){
-  confirmDel.open = true
-  confirmDel.id = tpl.id
-}
-function doDeleteTemplate(){
-  if (confirmDel.id) store.removeCustomTemplate(confirmDel.id)
-  confirmDel.open = false
-  confirmDel.id = null
-}
-
-// Confirmación eliminar rack del área
-const confirmRackDel = reactive({ open: false, id: null })
-function askDeleteRack(r){
-  confirmRackDel.open = true
-  confirmRackDel.id = r.id
-}
-function doDeleteRack(){
-  if (confirmRackDel.id) store.removeRack(confirmRackDel.id)
-  confirmRackDel.open = false
-  confirmRackDel.id = null
-}
-
-// Estado para validación de colisiones durante drag
-const invalidMap = reactive({})
-const prevPos = reactive({})
-
-function getRackGeom(r, x, y){
-  if ((r.type || 'rectangle') === 'barrel') {
-    const d = Number(r.width)
-    return { kind: 'circle', cx: x + d/2, cy: y + d/2, r: d/2 }
-  }
-  return { kind: 'rect', x, y, w: Number(r.width), h: Number(r.height) }
-}
-function rectsOverlapStrict(a,b){
-  return (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y)
-}
-function circlesOverlapStrict(a,b){
-  const dx = a.cx - b.cx
-  const dy = a.cy - b.cy
-  const dist2 = dx*dx + dy*dy
-  const rsum = a.r + b.r
-  return dist2 < rsum*rsum
-}
-function circleRectOverlapStrict(c, r){
-  const nx = Math.max(r.x, Math.min(c.cx, r.x + r.w))
-  const ny = Math.max(r.y, Math.min(c.cy, r.y + r.h))
-  const dx = c.cx - nx
-  const dy = c.cy - ny
-  return (dx*dx + dy*dy) < (c.r * c.r)
-}
-function geomsOverlapStrict(g1, g2){
-  if (g1.kind === 'rect' && g2.kind === 'rect') return rectsOverlapStrict(g1,g2)
-  if (g1.kind === 'circle' && g2.kind === 'circle') return circlesOverlapStrict(g1,g2)
-  if (g1.kind === 'circle' && g2.kind === 'rect') return circleRectOverlapStrict(g1,g2)
-  if (g1.kind === 'rect' && g2.kind === 'circle') return circleRectOverlapStrict(g2,g1)
-  return false
-}
-function willCollideAt(id, x, y){
-  const me = racks.value.find(r => r.id === id)
-  if (!me) return false
-  const g1 = getRackGeom(me, x, y)
-  for (const r of racks.value) {
-    if (r.id === id) continue
-    const g2 = getRackGeom(r, r.x, r.y)
-    if (geomsOverlapStrict(g1, g2)) return true
-  }
-  return false
-}
-
-function onRackDragStart(rack, e){
+function onRackDragStart(rack){
   prevPos[rack.id] = { x: rack.x, y: rack.y }
   invalidMap[rack.id] = false
 }
@@ -709,6 +574,138 @@ function geomInsideWorkspace(geom){
   if (geom.kind === 'circle') return geomIsCircleInside(geom.cx, geom.cy, geom.r, poly)
   if (geom.kind === 'rect') return geomIsRectInside(geom.x, geom.y, geom.w, geom.h, poly)
   return true
+}
+
+// Estado para validación de colisiones durante drag
+const invalidMap = reactive({})
+const prevPos = reactive({})
+
+function getRackGeom(r, x, y){
+  if ((r.type || 'rectangle') === 'barrel') {
+    const d = Number(r.width)
+    return { kind: 'circle', cx: x + d/2, cy: y + d/2, r: d/2 }
+  }
+  return { kind: 'rect', x, y, w: Number(r.width), h: Number(r.height) }
+}
+function rectsOverlapStrict(a,b){
+  return (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y)
+}
+function circlesOverlapStrict(a,b){
+  const dx = a.cx - b.cx
+  const dy = a.cy - b.cy
+  const dist2 = dx*dx + dy*dy
+  const rsum = a.r + b.r
+  return dist2 < rsum*rsum
+}
+function circleRectOverlapStrict(c, r){
+  const nx = Math.max(r.x, Math.min(c.cx, r.x + r.w))
+  const ny = Math.max(r.y, Math.min(c.cy, r.y + r.h))
+  const dx = c.cx - nx
+  const dy = c.cy - ny
+  return (dx*dx + dy*dy) < (c.r * c.r)
+}
+function geomsOverlapStrict(g1, g2){
+  if (g1.kind === 'rect' && g2.kind === 'rect') return rectsOverlapStrict(g1,g2)
+  if (g1.kind === 'circle' && g2.kind === 'circle') return circlesOverlapStrict(g1,g2)
+  if (g1.kind === 'circle' && g2.kind === 'rect') return circleRectOverlapStrict(g1,g2)
+  if (g1.kind === 'rect' && g2.kind === 'circle') return circleRectOverlapStrict(g2,g1)
+  return false
+}
+function willCollideAt(id, x, y){
+  const me = racks.value.find(r => r.id === id)
+  if (!me) return false
+  const g1 = getRackGeom(me, x, y)
+  for (const r of racks.value) {
+    if (r.id === id) continue
+    const g2 = getRackGeom(r, r.x, r.y)
+    if (geomsOverlapStrict(g1, g2)) return true
+  }
+  return false
+}
+
+// Editor de área (crear/editar)
+const wsEditor = reactive({ open: false, value: null })
+function openEditWsModal(){
+  const ws = store.currentWorkspace
+  if (!ws) return
+  wsEditor.open = true
+  wsEditor.value = { id: ws.id, name: ws.name, shape: ws.shape || 'custom', polygon: ws.polygon || [], unit: store.workspaceUnit, pixelsPerUnit: store.workspacePixelsPerUnit }
+}
+function closeWsEditor(){ wsEditor.open = false; wsEditor.value = null }
+function saveWorkspace(payload){
+  if (payload.id){
+    // Validar racks dentro del nuevo polígono
+    const outIds = []
+    for (const r of racks.value){
+      const inside = isInsideWorkspace(r, r.x, r.y)
+      if (!inside) outIds.push(r.id)
+    }
+    if (outIds.length){
+      store.currentWorkspace.racks = store.currentWorkspace.racks.filter(r => !outIds.includes(r.id))
+    }
+    store.updateWorkspace(payload.id, { name: payload.name, polygon: payload.polygon, shape: payload.shape, unit: payload.unit, pixelsPerUnit: payload.pixelsPerUnit })
+  } else {
+    store.addWorkspace(payload.name, { polygon: payload.polygon, shape: payload.shape, unit: payload.unit, pixelsPerUnit: payload.pixelsPerUnit })
+  }
+  closeWsEditor()
+}
+
+// Modal nueva área
+const newWsOpen = ref(false)
+const newWsName = ref('')
+function openNewWsModal(){ newWsOpen.value = true }
+function closeNewWsModal(){ newWsOpen.value = false; newWsName.value = '' }
+function createWorkspace(){
+  // Abrir editor con rect por defecto y nombre
+  wsEditor.open = true
+  wsEditor.value = { id: null, name: newWsName.value || '', shape: 'rectangle', unit: 'm', pixelsPerUnit: 100, polygon: [ { x:10, y:10 }, { x: workspace.value.width-10, y:10 }, { x:workspace.value.width-10, y: workspace.value.height-10 }, { x:10, y: workspace.value.height-10 } ] }
+  closeNewWsModal()
+}
+
+// Modal nueva plantilla
+const newRackTplOpen = ref(false)
+const newTpl = reactive({ name: '', type: 'rectangle', width: 120, height: 80, side: 100, diameter: 80, material: 'wood' })
+function openNewRackTplModal(){ newRackTplOpen.value = true }
+function closeNewRackTplModal(){
+  newRackTplOpen.value = false
+  Object.assign(newTpl, { name: '', type: 'rectangle', width: 120, height: 80, side: 100, diameter: 80, material: 'wood' })
+}
+function saveNewRackTpl(){
+  const payload = { name: newTpl.name, type: newTpl.type, material: newTpl.material }
+  if (newTpl.type === 'barrel') Object.assign(payload, { diameter: newTpl.diameter, height: newTpl.height })
+  else if (newTpl.type === 'square') Object.assign(payload, { side: newTpl.side, depth: 40, shelves: 0 })
+  else Object.assign(payload, { width: newTpl.width, height: newTpl.height, depth: 40, shelves: 0 })
+  store.addCustomTemplate(payload)
+  closeNewRackTplModal()
+}
+
+// Confirmación eliminar plantilla
+const confirmDel = reactive({ open: false, id: null })
+function askDeleteTemplate(tpl){
+  confirmDel.open = true
+  confirmDel.id = tpl.id
+}
+function doDeleteTemplate(){
+  if (confirmDel.id) store.removeCustomTemplate(confirmDel.id)
+  confirmDel.open = false
+  confirmDel.id = null
+}
+
+// Confirmación eliminar rack del área
+const confirmRackDel = reactive({ open: false, id: null })
+function askDeleteRack(r){
+  confirmRackDel.open = true
+  confirmRackDel.id = r.id
+}
+function doDeleteRack(){
+  if (confirmRackDel.id) store.removeRack(confirmRackDel.id)
+  confirmRackDel.open = false
+  confirmRackDel.id = null
+}
+
+// Limpiar anaqueles
+function clearRacks(){
+  store.clearRacks()
 }
 </script>
 
