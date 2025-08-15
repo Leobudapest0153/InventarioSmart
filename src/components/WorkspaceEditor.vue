@@ -1,7 +1,7 @@
 <template>
   <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/40" @click="onCancel"></div>
-    <div class="relative bg-white rounded-lg shadow-xl w-full max-w-3xl p-4">
+    <div class="relative bg-white rounded-lg shadow-xl w-full max-w-3xl p-4 mt-100">
       <h3 class="text-lg font-semibold mb-3">Área de Trabajo</h3>
 
       <div class="grid gap-4 md:grid-cols-5">
@@ -11,7 +11,7 @@
                         @wheel="onWheel"
                         @dragmove="onStageDragMove"
                         @dragend="onStageDragMove">
-              					  	<v-layer @mousedown="onCanvasClick" @dblclick="finishAdd">
+					  	<v-layer @mousedown="onCanvasClick">
                 					<v-rect :config="{ x:0, y:0, width: canvasW, height: canvasH, fill:'#f8fafc' }" />
 
                 					<!-- Grid -->
@@ -31,9 +31,18 @@
                   <v-text :config="{ x: seg.mx, y: seg.my, text: seg.label, fontSize: 12, fill:'#334155' }" />
                 </template>
 
+                <!-- Guías y coordenadas durante drag -->
+                <template v-if="dragging">
+                  <v-line :config="{ points:[guidePos.x,0, guidePos.x, canvasH], stroke:'#94a3b8', dash:[4,4], strokeWidth:1 }" />
+                  <v-line :config="{ points:[0,guidePos.y, canvasW, guidePos.y], stroke:'#94a3b8', dash:[4,4], strokeWidth:1 }" />
+                  <v-rect :config="{ x: guidePos.x + 8, y: guidePos.y + 8, width: 80, height: 22, fill:'rgba(255,255,255,0.8)', stroke:'#cbd5e1', cornerRadius:4 }" />
+                  <v-text :config="{ x: guidePos.x + 12, y: guidePos.y + 12, text: guideLabel, fontSize: 12, fill:'#0f172a' }" />
+                </template>
+
                 <!-- Vértices -->
                 <template v-for="(p, idx) in local.polygon" :key="idx">
-                  <v-circle :config="{ x:p.x, y:p.y, radius:6, fill:'#0ea5e9', draggable:true, stroke:'#0ea5e9', strokeWidth:1 }"
+                  <v-circle :config="{ x:p.x, y:p.y, radius: selectedIdx===idx?7:6, fill:selectedIdx===idx?'#0284c7':'#0ea5e9', draggable:true, stroke:selectedIdx===idx?'#0284c7':'#0ea5e9', strokeWidth:selectedIdx===idx?2:1 }"
+                            @click="() => selectVertex(idx)"
                             @dragmove="e => onPointDrag(idx, e)"
                             @dragend="e => onPointDragEnd(idx, e)"/>
                 </template>
@@ -54,10 +63,23 @@
                          :unit="local.unit"/>
           </div>
           <div class="flex items-center gap-2 mt-2">
-            <button class="btn btn-outline" @click="startAdd">Añadir vértices</button>
-            <button class="btn btn-outline" :disabled="!adding" @click="finishAdd">Cerrar polígono</button>
+            <button class="btn btn-outline" :class="{ 'ring-2 ring-sky-500': adding }" @click="toggleAddMode">{{ adding ? 'Salir de modo añadir vértice' : 'Modo añadir vértice' }}</button>
+            <button class="btn btn-outline" :disabled="selectedIdx===-1" @click="deleteSelected">Eliminar vértice</button>
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-slate-600">Restricción:</label>
+              <select class="border rounded-lg px-2 py-1" v-model="dragConstraint">
+                <option value="free">Libre</option>
+                <option value="x">Solo X</option>
+                <option value="y">Solo Y</option>
+              </select>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-slate-600">Margen (px)</label>
+              <input type="number" min="0" class="w-20 border rounded-lg px-2 py-1" v-model.number="dragMarginPx" />
+            </div>
             <button class="btn btn-outline" :disabled="local.polygon.length < 3" @click="resetRect">Rectángulo</button>
           </div>
+          <div class="mt-1 text-xs" :class="notice ? 'text-rose-600' : 'text-transparent'">{{ notice || '.' }}</div>
         </div>
         <div class="md:col-span-2 space-y-3">
           <div class="card p-3">
@@ -146,6 +168,14 @@ const emit = defineEmits(['save','cancel'])
 
 const local = reactive({ id:null, name:'', shape:'custom', polygon:[], unit:'m', pixelsPerUnit: 100 })
 
+// Estado de edición y restricciones
+const dragConstraint = ref('free') // 'free' | 'x' | 'y'
+const dragMarginPx = ref(100)
+const selectedIdx = ref(-1)
+const dragging = ref(false)
+const guidePos = reactive({ x: 0, y: 0 })
+const notice = ref('')
+
 watch(() => props.value, (v) => {
   if (!v) return
   local.id = v.id || null
@@ -197,6 +227,15 @@ const flatPoints = computed(() => local.polygon.flatMap(p => [p.x, p.y]))
 const areaPx2 = computed(() => polygonArea(local.polygon))
 const areaM2 = computed(() => metersSquaredFromPxSquared(areaPx2.value, local.pixelsPerUnit, local.unit))
 
+const guideLabel = computed(() => {
+  const ppu = Number(local.pixelsPerUnit)||100
+  const u = local.unit === 'cm' ? 'cm' : 'm'
+  const ux = guidePos.x / ppu
+  const uy = guidePos.y / ppu
+  const fmt = (val) => u==='cm' ? val.toFixed(0) : val.toFixed(2)
+  return `${fmt(ux)}, ${fmt(uy)} ${u}`
+})
+
 // Longitudes de segmentos
 function dist(a,b){ const dx=b.x-a.x, dy=b.y-a.y; return Math.sqrt(dx*dx+dy*dy) }
 const segments = computed(() => {
@@ -219,17 +258,46 @@ function defaultRect() {
   return [ { x: 10, y: 10 }, { x: props.canvasW - 10, y: 10 }, { x: props.canvasW - 10, y: props.canvasH - 10 }, { x: 10, y: props.canvasH - 10 } ]
 }
 
-function onPointDrag(idx, e) {
-  const x = Math.round(e.target.x())
-  const y = Math.round(e.target.y())
-  local.polygon[idx].x = Math.max(0, Math.min(x, props.canvasW))
-  local.polygon[idx].y = Math.max(0, Math.min(y, props.canvasH))
+function bboxOfOthers(excludeIdx){
+  const pts = local.polygon.filter((_,i) => i !== excludeIdx)
+  if (!pts.length) return { minX: 0, minY: 0, maxX: canvasW.value, maxY: canvasH.value }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const p of pts){ minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y) }
+  return { minX, minY, maxX, maxY }
 }
-function onPointDragEnd(idx, e) { onPointDrag(idx, e) }
+function applyConstraint(idx, x, y){
+  const mode = dragConstraint.value
+  const orig = local.polygon[idx]
+  let nx = x, ny = y
+  if (mode === 'x') ny = orig.y
+  else if (mode === 'y') nx = orig.x
+  // Limitar por bounding box de los otros puntos + margen
+  const bb = bboxOfOthers(idx)
+  const m = Number(dragMarginPx.value) || 0
+  const minX = bb.minX - m, maxX = bb.maxX + m, minY = bb.minY - m, maxY = bb.maxY + m
+  nx = Math.max(minX, Math.min(nx, maxX))
+  ny = Math.max(minY, Math.min(ny, maxY))
+  return { x: Math.round(nx), y: Math.round(ny) }
+}
+function onPointDrag(idx, e) {
+  dragging.value = true
+  selectedIdx.value = idx
+  const x = e.target.x()
+  const y = e.target.y()
+  const p = applyConstraint(idx, x, y)
+  local.polygon[idx].x = p.x
+  local.polygon[idx].y = p.y
+  guidePos.x = p.x
+  guidePos.y = p.y
+}
+function onPointDragEnd(idx, e) {
+  // aplicar una última vez por seguridad y limpiar estado de guía
+  onPointDrag(idx, e)
+  dragging.value = false
+}
 
 const adding = ref(false)
-function startAdd(){ adding.value = true }
-function finishAdd(){ adding.value = false }
+function toggleAddMode(){ adding.value = !adding.value }
 function stageToLocal(pos){
   const stage = stageRef.value?.getNode?.()
   if (!stage) return { x: pos?.x||0, y: pos?.y||0 }
@@ -237,21 +305,27 @@ function stageToLocal(pos){
   return { x: (pos.x - stage.x()) / scale, y: (pos.y - stage.y()) / scale }
 }
 function onCanvasClick(){
-  if (!adding.value) return
   const stage = stageRef.value?.getNode?.()
   const pointer = stage?.getPointerPosition?.()
   if (!pointer) return
   const p = stageToLocal(pointer)
-  local.polygon.push({ x: Math.max(0, Math.min(p.x, props.canvasW)), y: Math.max(0, Math.min(p.y, props.canvasH)) })
+  if (adding.value){
+    local.polygon.push({ x: Math.round(p.x), y: Math.round(p.y) })
+    selectedIdx.value = local.polygon.length - 1
+  } else {
+    // si no estamos añadiendo, limpiar selección al hacer click vacío (aprox)
+    selectedIdx.value = -1
+  }
 }
 
 function resetRect(){ local.shape='rectangle'; applyRect() }
 const rectW = ref(1000)
 const rectH = ref(600)
 function applyRect(){
-  const w = Math.max(40, Math.min(rectW.value, props.canvasW - 20))
-  const h = Math.max(40, Math.min(rectH.value, props.canvasH - 20))
+  const w = Math.max(40, rectW.value)
+  const h = Math.max(40, rectH.value)
   local.polygon = [ { x: 10, y: 10 }, { x: 10 + w, y: 10 }, { x: 10 + w, y: 10 + h }, { x: 10, y: 10 + h } ]
+  selectedIdx.value = -1
 }
 
 // L simple como polígono (en forma de U cerrada sin huecos)
@@ -271,6 +345,7 @@ function applyL(){
     { x: x0 + A - C, y: y0 + D },
     { x: x0, y: y0 + D },
   ]
+  selectedIdx.value = -1
 }
 
 function onShapeChange() {
@@ -279,6 +354,21 @@ function onShapeChange() {
   } else if (local.shape === 'l') {
     applyL()
   }
+}
+
+function selectVertex(idx){
+  selectedIdx.value = idx
+}
+
+function deleteSelected(){
+  notice.value = ''
+  if (selectedIdx.value === -1) return
+  if ((local.polygon?.length || 0) <= 3){
+    notice.value = 'No se puede eliminar: el polígono debe tener al menos 3 vértices.'
+    return
+  }
+  local.polygon.splice(selectedIdx.value, 1)
+  selectedIdx.value = -1
 }
 
 function onSave(){
