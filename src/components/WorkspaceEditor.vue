@@ -6,26 +6,28 @@
 
       <div class="grid gap-4 md:grid-cols-5">
         <div class="md:col-span-3">
-          <div class="border rounded-lg overflow-hidden">
+          <div class="border rounded-lg overflow-hidden relative">
             <v-stage ref="stageRef" :config="{ width: canvasW, height: canvasH, draggable: true, scale: {x: stageScale, y: stageScale} }"
                         @wheel="onWheel"
                         @dragmove="onStageDragMove"
                         @dragend="onStageDragMove">
-					  	<v-layer @mousedown="onCanvasClick">
-                					<v-rect :config="{ x:0, y:0, width: canvasW, height: canvasH, fill:'#f8fafc' }" />
+              <!-- Capa recortada: fondo + grilla -->
+              <v-layer :config="{ clip: { x: 0, y: 0, width: canvasW, height: canvasH } }">
+                <v-rect :config="{ x:0, y:0, width: canvasW, height: canvasH, fill:'#f8fafc' }" />
+                <!-- Grid -->
+                <GridLayer :width="canvasW"
+                           :height="canvasH"
+                           :scale="stageScale"
+                           :stageX="stagePosition.x"
+                           :stageY="stagePosition.y"
+                           :pixelsPerUnit="local.pixelsPerUnit"
+                           :unit="local.unit"/>
+              </v-layer>
 
-                					<!-- Grid -->
-                					<GridLayer :width="canvasW"
-                               :height="canvasH"
-                               :scale="stageScale"
-                               :stageX="stagePosition.x"
-                               :stageY="stagePosition.y"
-                               :pixelsPerUnit="local.pixelsPerUnit"
-                               :unit="local.unit"
-                               :polygon="local.polygon"/>
-
-                					<!-- Polígono editable -->
-                					<v-line :config="{ points: flatPoints, closed:true, stroke:'#0ea5e9', fill:'rgba(14,165,233,0.08)', strokeWidth:2 }" />
+              <!-- Capa de elementos editables (sin clipping) -->
+              <v-layer @mousedown="onCanvasClick">
+                <!-- Polígono editable -->
+                <v-line :config="{ points: flatPoints, closed:true, stroke:'#0ea5e9', fill:'rgba(14,165,233,0.08)', strokeWidth:2 }" />
                 <!-- Etiquetas de segmentos -->
                 <template v-for="(seg, i) in segments" :key="'seg-'+i">
                   <v-text :config="{ x: seg.mx, y: seg.my, text: seg.label, fontSize: 12, fill:'#334155' }" />
@@ -52,15 +54,15 @@
                   <v-text :config="{ x: 8, y: 8, text: 'Clic para agregar vértices. Doble clic para cerrar.', fontSize: 14, fill:'#0f172a' }" />
                 </template>
               </v-layer>
-          </v-stage>
-          <!-- Rulers overlay -->
-          <RulersOverlay :width="canvasW"
-                         :height="canvasH"
-                         :scale="stageScale"
-                         :stageX="stagePosition.x"
-                         :stageY="stagePosition.y"
-                         :pixelsPerUnit="local.pixelsPerUnit"
-                         :unit="local.unit"/>
+            </v-stage>
+            <!-- Rulers overlay -->
+            <RulersOverlay :width="canvasW"
+                           :height="canvasH"
+                           :scale="stageScale"
+                           :stageX="stagePosition.x"
+                           :stageY="stagePosition.y"
+                           :pixelsPerUnit="local.pixelsPerUnit"
+                           :unit="local.unit"/>
           </div>
           <div class="flex items-center gap-2 mt-2">
             <button class="btn btn-outline" :class="{ 'ring-2 ring-sky-500': adding }" @click="toggleAddMode">{{ adding ? 'Salir de modo añadir vértice' : 'Modo añadir vértice' }}</button>
@@ -336,7 +338,7 @@ function applyL(){
   const C = Math.max(40, lC.value)
   const D = Math.max(40, lD.value)
   const x0 = 10, y0 = 10
-  // Construimos una L convencional con 8 puntos (sin agujero)
+  // Construimos una L convencional con 6 puntos
   local.polygon = [
     { x: x0, y: y0 },
     { x: x0 + A, y: y0 },

@@ -22,7 +22,7 @@ const rulerSize = 28
 const hCanvas = ref(null)
 const vCanvas = ref(null)
 
-function niceStep(targetPx) {
+function niceStepPx(targetPx) {
   const pow10 = Math.pow(10, Math.floor(Math.log10(targetPx)))
   const cands = [1, 2, 5].map(c => c * pow10)
   let best = cands[0]
@@ -43,14 +43,12 @@ function drawRulers() {
 
   const pxPerUnitOnScreen = ppu * s
   const targetMinor = 50
-  const minorStepUnits = niceStep(targetMinor / pxPerUnitOnScreen)
-  const minorStepPxWorld = minorStepUnits * ppu
+  // paso menor en px de pantalla, convertido a mundo (px mundo)
+  const minorStepPxScreen = niceStepPx(targetMinor)
+  const minorStepPxWorld = minorStepPxScreen / s
 
-  let majorUnits = minorStepUnits * 10
-  if (unit === 'cm') {
-    if (minorStepUnits < 100) majorUnits = 100
-  }
-  const majorStepPxWorld = majorUnits * ppu
+  // Ticks mayores cada 1 unidad completa seleccionada
+  const majorStepPxWorld = 1 * ppu
 
   // Horizontal
   const hc = hCanvas.value
@@ -123,11 +121,6 @@ function drawRulers() {
       }
     }
   }
-}
-
-function handleResize() {
-  // Redibujar cuando cambian props implicadas o tamaño del canvas
-  drawRulers()
 }
 
 onMounted(() => {
