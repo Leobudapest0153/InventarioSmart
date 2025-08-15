@@ -76,7 +76,8 @@
         <div ref="canvasContainer" class="relative overflow-auto border border-border rounded-lg" :style="{height: '700px'}"
              @dragover.prevent
              @drop="onDrop">
-          <v-stage ref="stageRef" :config="{ width: workspace.width, height: workspace.height, draggable: false, scale: {x: scale, y: scale} }">
+          <v-stage ref="stageRef" :config="{ width: workspace.width, height: workspace.height, draggable: true, scale: {x: scale, y: scale} }"
+                   @wheel="onWheel">
             <v-layer>
               <!-- Fondo -->
           <v-rect :config="{ x:0, y:0, width: workspace.width, height: workspace.height, fill:'#f8fafc' }" />
@@ -262,9 +263,39 @@ function onWorkspaceChange(id) {
   }
   const totalOccupiedPx2 = computed(() => racks.value.reduce((acc, r) => acc + rackAreaPx2(r), 0))
   const capacityExceeded = computed(() => totalOccupiedPx2.value > workspaceAreaPx2.value)
+  const occupiedM2 = computed(() => metersSquaredFromPxSquared(totalOccupiedPx2.value, store.workspacePixelsPerUnit, store.workspaceUnit))
+  const capacityM2 = computed(() => metersSquaredFromPxSquared(workspaceAreaPx2.value, store.workspacePixelsPerUnit, store.workspaceUnit))
 
 const canvasContainer = ref(null)
 const stageRef = ref(null)
+
+// Zoom con rueda del ratón en el área actual
+function onWheel(e){
+  // Evitar scroll de página/contenedor mientras se hace zoom
+  e?.evt?.preventDefault?.()
+  const stage = stageRef.value?.getNode?.()
+  if (!stage) return
+  const oldScale = Number(scale.value) || 1
+  const pointer = stage.getPointerPosition()
+  if (!pointer) return
+  const scaleBy = 1.05
+  const direction = e.evt.deltaY > 0 ? -1 : 1
+  const newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy
+  // Punto fijo del puntero antes de cambiar escala
+  const mousePointTo = {
+    x: (pointer.x - stage.x()) / oldScale,
+    y: (pointer.y - stage.y()) / oldScale,
+  }
+  // Limitar factor de zoom
+  scale.value = Math.min(5, Math.max(0.2, newScale))
+  // Reposicionar para mantener el foco bajo el puntero
+  const newPos = {
+    x: pointer.x - mousePointTo.x * scale.value,
+    y: pointer.y - mousePointTo.y * scale.value,
+  }
+  stage.position(newPos)
+  stage.batchDraw()
+}
 
 function toHumanType(t){
   if (t==='barrel') return 'Barril'
@@ -443,7 +474,7 @@ function openEditWsModal(){
   const ws = store.currentWorkspace
   if (!ws) return
   wsEditor.open = true
-  wsEditor.value = { id: ws.id, name: ws.name, shape: ws.shape || 'custom', polygon: ws.polygon || [], metersPerPixel: ws.metersPerPixel || 0.01 }
+  wsEditor.value = { id: ws.id, name: ws.name, shape: ws.shape || 'custom', polygon: ws.polygon || [], unit: store.workspaceUnit, pixelsPerUnit: store.workspacePixelsPerUnit }
 }
 function closeWsEditor(){ wsEditor.open = false; wsEditor.value = null }
 function saveWorkspace(payload){
@@ -458,9 +489,9 @@ function saveWorkspace(payload){
     if (outIds.length){
       store.currentWorkspace.racks = store.currentWorkspace.racks.filter(r => !outIds.includes(r.id))
     }
-    store.updateWorkspace(payload.id, { name: payload.name, polygon: payload.polygon, shape: payload.shape, metersPerPixel: payload.metersPerPixel })
+    store.updateWorkspace(payload.id, { name: payload.name, polygon: payload.polygon, shape: payload.shape, unit: payload.unit, pixelsPerUnit: payload.pixelsPerUnit })
   } else {
-    store.addWorkspace(payload.name, { polygon: payload.polygon, shape: payload.shape, metersPerPixel: payload.metersPerPixel })
+    store.addWorkspace(payload.name, { polygon: payload.polygon, shape: payload.shape, unit: payload.unit, pixelsPerUnit: payload.pixelsPerUnit })
   }
   closeWsEditor()
 }
@@ -473,7 +504,7 @@ function closeNewWsModal(){ newWsOpen.value = false; newWsName.value = '' }
 function createWorkspace(){
   // Abrir editor con rect por defecto y nombre
   wsEditor.open = true
-  wsEditor.value = { id: null, name: newWsName.value || '', shape: 'rectangle', metersPerPixel: 0.01, polygon: [ { x:10, y:10 }, { x: workspace.value.width-10, y:10 }, { x: workspace.value.width-10, y: workspace.value.height-10 }, { x:10, y: workspace.value.height-10 } ] }
+  wsEditor.value = { id: null, name: newWsName.value || '', shape: 'rectangle', unit: 'm', pixelsPerUnit: 100, polygon: [ { x:10, y:10 }, { x: workspace.value.width-10, y:10 }, { x:workspace.value.width-10, y: workspace.value.height-10 }, { x:10, y: workspace.value.height-10 } ] }
   closeNewWsModal()
 }
 

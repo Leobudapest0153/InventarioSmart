@@ -78,7 +78,7 @@ export const useInventoryStore = defineStore('inventory', {
         { x: 10, y: (baseWorkspace.height - 10) },
       ]
       const shape = w.shape || 'custom' // 'rectangle' | 'l' | 'custom'
-      return { id, name: w.name, racks, localTemplates: [], polygon, shape, metersPerPixel: w.metersPerPixel || 0.01 }
+      return { id, name: w.name, racks, localTemplates: [], polygon, shape, unit: w.unit || 'm', pixelsPerUnit: w.pixelsPerUnit || 100 }
     })
     const currentWorkspaceId = workspaces[0]?.id || null
 
@@ -113,8 +113,11 @@ export const useInventoryStore = defineStore('inventory', {
     workspacePolygon() {
       return this.currentWorkspace?.polygon || []
     },
-    workspaceMetersPerPixel() {
-      return this.currentWorkspace?.metersPerPixel || 0.01
+    workspaceUnit() {
+      return this.currentWorkspace?.unit || 'm'
+    },
+    workspacePixelsPerUnit() {
+      return this.currentWorkspace?.pixelsPerUnit || 100
     }
   },
   actions: {
@@ -127,7 +130,7 @@ export const useInventoryStore = defineStore('inventory', {
         { x: (this.workspace.width - 10), y: (this.workspace.height - 10) },
         { x: 10, y: (this.workspace.height - 10) },
       ]
-      const ws = { id, name: name?.trim() || `Área ${id.slice(-3)}`, racks: [], localTemplates: [], polygon, shape: opts.shape || 'custom', metersPerPixel: opts.metersPerPixel || 0.01 }
+      const ws = { id, name: name?.trim() || `Área ${id.slice(-3)}`, racks: [], localTemplates: [], polygon, shape: opts.shape || 'custom', unit: opts.unit || 'm', pixelsPerUnit: opts.pixelsPerUnit || 100 }
       this.workspaces.push(ws)
       this.currentWorkspaceId = id
       this.currentRackId = null
