@@ -103,7 +103,7 @@
                          @dragstart="() => onRackDragStart(rack)"
                          @dragmove="e => onRackDragMove(rack, e)"
                          @dragend="e => onRackDragEnd(rack, e)"
-                         @dblclick="goDetail(rack.id)"
+                         @dblclick="onRackDblClick(rack)"
                          @click="select(rack.id)">
                   <template v-if="rack.type==='barrel'">
                     <v-circle :config="{ x: (rack.width/2), y: (rack.width/2), radius: rack.width/2, stroke: invalidMap[rack.id] ? '#ef4444' : '#0ea5e9', fill: materialColor(rack.material) }" />
@@ -250,8 +250,10 @@ import WorkspaceEditor from './WorkspaceEditor.vue'
 import GridLayer from './GridLayer.vue'
 import RulersOverlay from './RulersOverlay.vue'
 import { isRectInsidePolygon as geomIsRectInside, isCircleInsidePolygon as geomIsCircleInside, polygonArea } from '../utils/geom'
+import { useRouter } from 'vue-router'
 
 const store = useInventoryStore()
+const router = useRouter()
 
 // Plantillas visibles (built-in + locales)
 const templates = computed(() => store.templates)
@@ -553,6 +555,28 @@ function willCollideWithGeom(geom){
     if (geomsOverlapStrict(geom, g2)) return true
   }
   return false
+}
+
+// Navegar al detalle de un anaquel
+function goDetail(id){
+  if (!id) return
+  // Guardamos selección opcionalmente
+  store.setCurrentRack(id)
+  router.push({ name: 'shelf', params: { id } })
+}
+
+// Doble click: solo entrar si el elemento tiene hijos (estantes)
+function onRackDblClick(rack){
+  if (!rack) return
+  const hasChildren = Array.isArray(rack.shelves) && rack.shelves.length > 0
+  if (!hasChildren) return
+  goDetail(rack.id)
+}
+
+// Selección simple
+function select(id){
+  if (!id) return
+  store.setCurrentRack(id)
 }
 
 // Validar límites contra polígono del workspace
