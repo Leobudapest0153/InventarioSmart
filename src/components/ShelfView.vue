@@ -117,12 +117,13 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useInventoryStore } from '../stores/inventory'
 import MaterialSelector from './MaterialSelector.vue'
 import ShelfItem from './ShelfItem.vue'
 
 const route = useRoute()
+const router = useRouter()
 const store = useInventoryStore()
 
 const rack = computed(()=> store.racks.find(r => r.id === route.params.id))
@@ -148,7 +149,7 @@ const mat = computed(()=> materials.value.find(m => m.id === local.material))
 const maxWeight = computed(()=> mat.value?.maxWeight ?? 0)
 const matName = computed(()=> mat.value?.name ?? '-')
 
-function goBack(){ window.location.hash = '#/' }
+function goBack(){ router.push('/') }
 function save(){
   if(!rack.value) return
   if (rack.value.type === 'barrel') {

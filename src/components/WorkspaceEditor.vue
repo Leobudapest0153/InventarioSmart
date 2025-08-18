@@ -1,7 +1,7 @@
 <template>
   <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/40" @click="onCancel"></div>
-    <div class="relative bg-white rounded-lg shadow-xl w-full max-w-3xl p-4 mt-100 max-h-[90vh] overflow-y-auto">
+    <div class="relative bg-white rounded-lg shadow-xl w-full max-w-3xl p-4 mt-24 max-h-[90vh] overflow-y-auto">
       <h3 class="text-lg font-semibold mb-3">Área de Trabajo</h3>
 
       <div class="grid gap-4 md:grid-cols-5">
@@ -167,7 +167,7 @@ import RulersOverlay from './RulersOverlay.vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  value: { type: Object, default: null }, // { id?, name, polygon, shape, metersPerPixel }
+  value: { type: Object, default: null }, // { id?, name, polygon, shape, unit, pixelsPerUnit }
   canvasW: { type: Number, default: 1200 },
   canvasH: { type: Number, default: 700 },
 })
